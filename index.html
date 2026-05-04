@@ -70,7 +70,7 @@
     <!-- Use type="text/babel" with data-type="module" to allow JSX and ES Module imports -->
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, deleteDoc, addDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Config
@@ -185,10 +185,7 @@
             const [isMasterAuthenticated, setIsMasterAuthenticated] = useState(false);
             const [allUsers, setAllUsers] = useState([]);
 
-            const [comments, setComments] = useState([
-                { name: "Sophie", text: "This place feels so peaceful. Thank you for sharing, Allen.", likes: 12, category: "Memories" },
-                { name: "Haku", text: "The garden visualization is such a beautiful touch.", likes: 8, category: "Philosophy" }
-            ]);
+            const [comments, setComments] = useState([]);
 
             const [journey, setJourney] = useState([
                 { year: "1998", title: "The Beginning", desc: "Born in a quiet town where the wind always smelled like rain.", category: "Early Life" },
@@ -202,23 +199,45 @@
             // --- Firebase Effects ---
             useEffect(() => {
                 const initAuth = async () => {
-                    await signInAnonymously(auth);
+                    try {
+                        if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
+                            await signInWithCustomToken(auth, window.__initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) {
+                        console.error("Auth init failed:", err);
+                    }
                 };
                 initAuth();
 
-                const unsubscribe = onAuthStateChanged(auth, async (u) => {
+                const unsubscribe = onAuthStateChanged(auth, (u) => {
                     setUser(u);
-                    if (u) {
-                        // Check if user has a profile
-                        const profileDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid));
-                        if (profileDoc.exists()) {
-                            setProfile(profileDoc.data());
-                        }
-                    }
-                    setFbLoading(false);
                 });
                 return () => unsubscribe();
             }, []);
+
+            // Handle Profile Fetching
+            useEffect(() => {
+                if (!user) {
+                    setProfile(null);
+                    setFbLoading(false);
+                    return;
+                }
+                const fetchProfile = async () => {
+                    try {
+                        const profileDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid));
+                        if (profileDoc.exists()) {
+                            setProfile(profileDoc.data());
+                        }
+                    } catch (err) {
+                        console.error("Error fetching profile:", err);
+                    } finally {
+                        setFbLoading(false);
+                    }
+                };
+                fetchProfile();
+            }, [user]);
 
             // Real-time comments listener
             useEffect(() => {
@@ -226,23 +245,22 @@
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'comments');
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const fetchedComments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // Simple local sort by timestamp descending
                     fetchedComments.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-                    if (fetchedComments.length > 0) setComments(fetchedComments);
-                }, (error) => console.error("Firestore Error:", error));
+                    setComments(fetchedComments);
+                }, (error) => console.error("Firestore Comments Error:", error));
                 return () => unsubscribe();
             }, [user]);
 
             // Master panel listener
             useEffect(() => {
-                if (isMasterAuthenticated) {
+                if (isMasterAuthenticated && user) {
                     const q = collection(db, 'artifacts', appId, 'public', 'data', 'users');
                     const unsubscribe = onSnapshot(q, (snapshot) => {
                         setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    });
+                    }, (error) => console.error("Firestore Users Error:", error));
                     return () => unsubscribe();
                 }
-            }, [isMasterAuthenticated]);
+            }, [isMasterAuthenticated, user]);
 
             // --- Computed ---
             const gardenPlants = useMemo(() => {
@@ -282,11 +300,12 @@
                 if (masterCode === "ALLEN22") {
                     setIsMasterAuthenticated(true);
                 } else {
-                    setMasterCode(""); // Reset on fail
+                    setMasterCode(""); 
                 }
             };
 
             const deleteUserAccount = async (uid) => {
+                if (!user) return;
                 try {
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
                 } catch (err) { console.error(err); }
@@ -492,7 +511,7 @@
                     {showAccountModal && (
                         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md" onClick={() => setShowAccountModal(false)}>
                             <div className={`max-w-md w-full p-10 rounded-[3rem] border shadow-2xl relative ${isNight ? 'bg-slate-800 border-slate-700' : 'bg-white border-sage-100'}`} onClick={e => e.stopPropagation()}>
-                                <button className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full" onClick={() => setShowAccountModal(false)}><Icon name="X" /></button>
+                                <button className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors" onClick={() => setShowAccountModal(false)}><Icon name="X" /></button>
                                 <div className="text-center mb-8">
                                     <Icon name="UserPlus" className="mx-auto mb-4 text-sage-600" size={32} />
                                     <h2 className="text-3xl font-bold font-serif">Join the Garden</h2>
@@ -531,7 +550,7 @@
                     {showWisdomModal && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm" onClick={() => setShowWisdomModal(false)}>
                             <div className={`max-w-md w-full p-8 rounded-[2.5rem] border shadow-2xl relative ${isNight ? 'bg-slate-800 border-slate-700' : 'bg-white border-sage-100'}`} onClick={e => e.stopPropagation()}>
-                                <button className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full" onClick={() => setShowWisdomModal(false)}><Icon name="X" /></button>
+                                <button className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors" onClick={() => setShowWisdomModal(false)}><Icon name="X" /></button>
                                 <div className="text-center min-h-[120px] flex flex-col justify-center">
                                     <Icon name="Sparkles" className="mx-auto mb-6 text-amber-500" size={32} />
                                     <h2 className="text-2xl font-bold mb-4">✨ Soulful Insight</h2>
