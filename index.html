@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autobiography by Allen</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- React & Babel for JSX -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, .font-serif { font-family: 'Playfair Display', serif; }
+        [x-cloak] { display: none !important; }
+
+        @keyframes drift {
+            from { transform: translateX(-200px); }
+            to { transform: translateX(calc(100vw + 200px)); }
+        }
+        @keyframes float {
+            0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0; }
+            10% { opacity: 0.6; }
+            90% { opacity: 0.6; }
+            100% { transform: translate(40px, -200px) rotate(360deg) scale(0.5); opacity: 0; }
+        }
+        @keyframes sway {
+            0%, 100% { transform: rotate(-1deg); }
+            50% { transform: rotate(1deg); }
+        }
+        .animate-drift { animation: drift linear infinite; }
+        .animate-float { animation: float linear infinite; }
+        .animate-sway { animation: sway ease-in-out infinite; animation-duration: 4s; }
+
+        .bg-sage-200 { background-color: #A8C3A0; }
+        .bg-sage-100 { background-color: #E2F0CB; }
+        .bg-sage-50 { background-color: #f1f5f0; }
+        .text-sage-600 { color: #4b6b45; }
+        .border-sage-200 { border-color: #A8C3A0; }
+        .border-sage-100 { border-color: #d1dfcd; }
+        
+        .backface-hidden { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .perspective { perspective: 1000px; }
+        .preserve-3d { transform-style: preserve-3d; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+    </style>
+</head>
+<body class="overflow-x-hidden min-h-screen relative">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- API Configuration ---
+        const apiKey = ""; // The execution environment provides the key at runtime
+
+        const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                if (retries > 0) {
+                    await new Promise(resolve => setTimeout(resolve, backoff));
+                    return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                }
+                throw error;
+            }
+        };
+
+        const pcmToWav = (pcmData, sampleRate) => {
+            const buffer = new ArrayBuffer(44 + pcmData.length * 2);
+            const view = new DataView(buffer);
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            writeString(0, 'RIFF');
+            view.setUint32(4, 32 + pcmData.length * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, pcmData.length * 2, true);
+            for (let i = 0; i < pcmData.length; i++) {
+                view.setInt16(44 + i * 2, pcmData[i], true);
+            }
+            return new Blob([buffer], { type: 'audio/wav' });
+        };
+
+        const Icon = ({ name, className, size = 20 }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (ref.current) {
+                    ref.current.innerHTML = '';
+                    const i = document.createElement('i');
+                    // Convert CamelCase to kebab-case for Lucide attribute
+                    const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    i.setAttribute('data-lucide', kebabName);
+                    if (className) i.className = className;
+                    i.style.width = `${size}px`;
+                    i.style.height = `${size}px`;
+                    i.style.display = 'inline-block';
+                    ref.current.appendChild(i);
+                    
+                    // Initialize lucide for this element
+                    if (window.lucide) {
+                        window.lucide.createIcons({
+                            attrs: {
+                                width: size,
+                                height: size,
+                                'stroke-width': 2
+                            }
+                        });
+                    }
+                }
+            }, [name, className, size]);
+            return <span ref={ref} className="inline-flex items-center justify-center leading-none"></span>;
+        };
+
+        const App = () => {
+            const [view, setView] = useState('home');
+            const [isNight, setIsNight] = useState(false);
+            const [isMuted, setIsMuted] = useState(true);
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
+            const [aiLoading, setAiLoading] = useState(false);
+            const [activePrompt, setActivePrompt] = useState("Click the button below to generate a ✨ special reflection prompt...");
+            const [wisdom, setWisdom] = useState("");
+            const [newComment, setNewComment] = useState("");
+            const [analyzedMemory, setAnalyzedMemory] = useState("");
+            const [comments, setComments] = useState([
+                { name: "Sophie", text: "This place feels so peaceful. Thank you for sharing, Allen.", likes: 12, category: "Memories" },
+                { name: "Haku", text: "The garden visualization is such a beautiful touch.", likes: 8, category: "Philosophy" }
+            ]);
+
+            const audioRef = useRef(null);
+
+            const JOURNEY_PHASES = [
+                { year: "1998", title: "The Beginning", desc: "Born in a quiet town where the wind always smelled like rain.", category: "Early Life" },
+                { year: "2010", title: "The Curious Student", desc: "Found my first journal. I realized that words could build worlds.", category: "School" },
+                { year: "2018", title: "Crossing the Valley", desc: "A difficult period that taught me the strength of silence and resilience.", category: "Struggles" },
+                { year: "2024", title: "The Present Garden", desc: "Cultivating stories and helping others find their own voice.", category: "Current" }
+            ];
+
+            const gardenPlants = useMemo(() => {
+                return comments.map((c, i) => ({
+                    id: i,
+                    color: ({"Philosophy": "#FF9AA2", "Memories": "#C7CEEA", "Life Advice": "#FFDAC1"})[c.category] || "#E2F0CB",
+                    size: i === 0 ? "scale-125" : "scale-100",
+                    delay: `${i * 0.2}s`,
+                    label: c.text.substring(0, 20) + "..."
+                })).slice(0, 8);
+            }, [comments]);
+
+            const downloadSite = () => {
+                const htmlContent = document.documentElement.outerHTML;
+                const blob = new Blob([htmlContent], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'autobiography-by-allen.html';
+                link.click();
+            };
+
+            const generateAIPrompt = async () => {
+                setAiLoading(true);
+                try {
+                    const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: "Give me a new prompt." }] }],
+                            systemInstruction: { parts: [{ text: "Generate a single, profound reflection prompt for a personal journal. Tone: Studio Ghibli-inspired. Max 1 sentence." }] }
+                        })
+                    });
+                    setActivePrompt(result.candidates[0].content.parts[0].text.trim());
+                } catch (err) {
+                    setActivePrompt("The wind is quiet today. Try again in a moment.");
+                } finally { setAiLoading(false); }
+            };
+
+            const speakWisdom = async (text) => {
+                if (!text) return;
+                setAiLoading(true);
+                try {
+                    const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: `Say gently: ${text}` }] }],
+                            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } },
+                            model: "gemini-2.5-flash-preview-tts"
+                        })
+                    });
+                    const part = response.candidates[0].content.parts[0];
+                    const pcmBytes = Uint8Array.from(atob(part.inlineData.data), c => c.charCodeAt(0));
+                    const wavBlob = pcmToWav(new Int16Array(pcmBytes.buffer), parseInt(part.inlineData.mimeType.split('rate=')[1]) || 24000);
+                    if (audioRef.current) { audioRef.current.src = URL.createObjectURL(wavBlob); audioRef.current.play(); }
+                } catch (err) { console.error(err); } finally { setAiLoading(false); }
+            };
+
+            const handleImageUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setAiLoading(true);
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    try {
+                        const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ role: "user", parts: [{ text: "Analyze this memory." }, { inlineData: { mimeType: file.type, data: reader.result.split(',')[1] } }] }],
+                                systemInstruction: { parts: [{ text: "Describe the feeling this image evokes in a nostalgic Studio Ghibli style. 2 sentences." }] }
+                            })
+                        });
+                        setAnalyzedMemory(result.candidates[0].content.parts[0].text.trim());
+                    } catch (err) { setAnalyzedMemory("The memory is a bit blurry... but warmth remains."); } finally { setAiLoading(false); }
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const askTheWind = async () => {
+                setAiLoading(true);
+                try {
+                    const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: "Give me wisdom." }] }],
+                            systemInstruction: { parts: [{ text: "Provide a short piece of calm, Ghibli-esque wisdom. Max 20 words." }] }
+                        })
+                    });
+                    setWisdom(result.candidates[0].content.parts[0].text.trim());
+                } catch (err) { setWisdom("Listen closely... the wind is whispering elsewhere."); } finally { setAiLoading(false); }
+            };
+
+            const handlePost = async () => {
+                if (!newComment.trim()) return;
+                setAiLoading(true);
+                try {
+                    const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: newComment }] }],
+                            systemInstruction: { parts: [{ text: "Categorize as: 'Philosophy', 'Memories', or 'Life Advice'. Output only the word." }] }
+                        })
+                    });
+                    const category = result.candidates[0].content.parts[0].text.trim();
+                    setComments([{ name: "Guest", text: newComment, likes: 0, category }, ...comments]);
+                    setNewComment("");
+                } catch (err) {
+                   setComments([{ name: "Guest", text: newComment, likes: 0, category: "Philosophy" }, ...comments]);
+                   setNewComment("");
+                } finally { setAiLoading(false); }
+            };
+
+            const theme = isNight ? "bg-[#1a2533] text-slate-200" : "bg-[#F5E9DC] text-slate-800";
+
+            const facts = [
+                { front: "Favorite Drink", back: "Hot Jasmine Tea with a hint of honey." },
+                { front: "Ideal Morning", back: "Watching the fog lift from a balcony." },
+                { front: "Secret Talent", back: "Can identify most trees by their leaves." },
+                { front: "Current Read", back: "A collection of haikus from the 17th century." }
+            ];
+
+            return (
+                <div className={`min-h-screen ${theme} transition-colors duration-1000 relative`}>
+                    <audio ref={audioRef} className="hidden" />
+                    
+                    {/* Ambient Particles */}
+                    <div className="fixed inset-0 pointer-events-none z-0">
+                        {[...Array(15)].map((_, i) => (
+                            <div key={i} className={`absolute animate-float ${isNight ? 'bg-amber-200 w-1 h-1 rounded-full blur-[1px]' : 'text-sage-300/30'}`}
+                                style={{ left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`, animationDelay: `${Math.random() * 5}s`, animationDuration: `${15 + Math.random() * 20}s` }}>
+                                {!isNight && <Icon name="Leaf" size={14 + Math.random() * 10} />}
+                            </div>
+                        ))}
+                        {!isNight && (
+                            <div className="opacity-40">
+                                <Icon name="Cloud" className="absolute top-20 -left-40 animate-drift" size={180} />
+                                <Icon name="Cloud" className="absolute top-80 -left-40 animate-drift" size={120} />
+                            </div>
+                        )}
+                    </div>
+
+                    <nav className={`fixed top-0 w-full z-50 px-6 py-4 flex justify-between items-center transition-all ${isNight ? 'bg-[#1a2533]/80 border-slate-700' : 'bg-[#F5E9DC]/80 border-sage-200'} backdrop-blur-md border-b`}>
+                        <div className="flex items-center space-x-2 group cursor-pointer" onClick={() => setView('home')}>
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isNight ? 'bg-amber-900/50 text-amber-200' : 'bg-sage-200 text-sage-700'}`}>
+                                <Icon name="Flower" size={20} />
+                            </div>
+                            <span className="text-xl font-bold">Allen</span>
+                        </div>
+                        <div className="hidden md:flex space-x-6">
+                            {['home', 'garden', 'journey', 'prompts', 'community'].map(v => (
+                                <button key={v} onClick={() => setView(v)} className={`capitalize text-sm font-medium ${view === v ? 'text-sage-600 font-bold' : 'opacity-60'}`}>{v}</button>
+                            ))}
+                        </div>
+                        <div className="flex items-center space-x-4">
+                            <button onClick={downloadSite} className="p-2 hover:bg-black/5 rounded-full" title="Download Site"><Icon name="Download" size={18}/></button>
+                            <button onClick={() => setIsNight(!isNight)}>{isNight ? <Icon name="Sun" /> : <Icon name="Moon" />}</button>
+                            <button className="md:hidden" onClick={() => setIsMenuOpen(!isMenuOpen)}><Icon name={isMenuOpen ? "X" : "Menu"} /></button>
+                        </div>
+                    </nav>
+
+                    {/* Mobile Menu */}
+                    {isMenuOpen && (
+                        <div className={`fixed inset-0 z-40 md:hidden pt-24 px-8 ${theme} backdrop-blur-xl bg-opacity-95`}>
+                            <div className="flex flex-col space-y-6">
+                                {['home', 'garden', 'journey', 'prompts', 'community'].map(v => (
+                                    <button key={v} onClick={() => { setView(v); setIsMenuOpen(false); }} className={`capitalize text-3xl font-bold text-left ${view === v ? 'text-sage-600' : 'opacity-60'}`}>{v}</button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <main className="pt-32 pb-24 px-6 max-w-5xl mx-auto relative z-10">
+                        {view === 'home' && (
+                            <div className="text-center space-y-12 animate-in fade-in duration-1000">
+                                <h1 className="text-6xl md:text-8xl font-black">Stories <span className="text-sage-600">Breathe</span> in Silence.</h1>
+                                <p className="text-xl opacity-70 max-w-2xl mx-auto">Welcome to my digital garden. Use ✨ AI to scan your photos or listen to the wind's secrets.</p>
+                                
+                                <div className={`inline-flex items-start space-x-4 p-6 rounded-3xl text-left max-w-md mx-auto border shadow-sm ${isNight ? 'bg-slate-800/40 border-slate-700' : 'bg-white border-sage-100'}`}>
+                                    <div className="p-3 bg-sage-100 text-sage-600 rounded-2xl">
+                                        <Icon name="History" size={24} />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center space-x-2 mb-1">
+                                            <span className="text-xs font-bold uppercase tracking-widest text-sage-600">Memory — May 4th</span>
+                                        </div>
+                                        <p className="text-sm italic opacity-80 leading-relaxed font-sans">"Started the first draft of 'The Summer of Cicadas' while sitting under an old oak tree."</p>
+                                    </div>
+                                </div>
+
+                                <section className="pt-12 text-left max-w-4xl mx-auto">
+                                    <div className="flex items-center space-x-4 mb-8">
+                                        <Icon name="Info" className="text-sage-500" />
+                                        <h2 className="text-2xl font-bold">Quick Facts</h2>
+                                    </div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        {facts.map((fact, i) => (
+                                            <div key={i} className="group h-32 perspective">
+                                                <div className="relative h-full w-full rounded-2xl transition-all duration-500 preserve-3d group-hover:rotate-y-180 shadow-sm">
+                                                    <div className={`absolute inset-0 flex items-center justify-center rounded-2xl p-4 backface-hidden border ${isNight ? 'bg-slate-800 border-slate-700' : 'bg-white border-sage-50'}`}>
+                                                        <span className="text-sm font-bold text-center">{fact.front}</span>
+                                                    </div>
+                                                    <div className={`absolute inset-0 flex items-center justify-center rounded-2xl p-4 rotate-y-180 backface-hidden ${isNight ? 'bg-sage-900' : 'bg-sage-100'}`}>
+                                                        <span className="text-xs italic text-center text-sage-800">{fact.back}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            </div>
+                        )}
+
+                        {view === 'garden' && (
+                          <div className="text-center space-y-16 animate-in zoom-in-95 duration-500">
+                            <h2 className="text-4xl font-bold">Memory Garden</h2>
+                            <div className="relative h-[300px] flex items-end justify-around bg-black/5 rounded-[3rem] p-12 overflow-hidden">
+                                {gardenPlants.map(p => (
+                                    <div key={p.id} className={`flex flex-col items-center animate-sway transition-transform ${p.size}`}>
+                                        <div className="relative group">
+                                            <div className="absolute -top-10 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-white text-xs px-2 py-1 rounded shadow pointer-events-none whitespace-nowrap transition-opacity text-slate-800">{p.label}</div>
+                                            <Icon name="Flower" size={24} style={{color: p.color}} />
+                                        </div>
+                                        <div className={`w-1 h-32 rounded-full ${isNight ? 'bg-emerald-800' : 'bg-emerald-400'}`}></div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="space-y-8">
+                                <div className="flex flex-col items-center space-y-4">
+                                    <label className="bg-sage-600 text-white px-8 py-3 rounded-full cursor-pointer flex items-center justify-center space-x-2 transition-transform hover:scale-105 active:scale-95 shadow-lg">
+                                        <Icon name="Camera" size={20}/><span>✨ Scan a Memory Photo</span>
+                                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                                    </label>
+                                    {aiLoading && <Icon name="Loader2" className="animate-spin text-sage-600" />}
+                                    {analyzedMemory && <p className="italic text-lg text-sage-600 max-w-xl mx-auto">"{analyzedMemory}"</p>}
+                                </div>
+                                <div className="flex justify-center space-x-4">
+                                    <button onClick={askTheWind} className="bg-amber-100 text-amber-700 px-6 py-3 rounded-full font-bold flex items-center space-x-2 hover:bg-amber-200 transition-colors shadow-sm"><Icon name="Wind" /><span>Ask the Wind</span></button>
+                                    {wisdom && <button onClick={() => speakWisdom(wisdom)} className="p-3 bg-indigo-100 text-indigo-700 rounded-full hover:bg-indigo-200 transition-colors"><Icon name="Volume1" /></button>}
+                                </div>
+                                {wisdom && <p className="italic text-amber-600 text-xl">"{wisdom}"</p>}
+                            </div>
+                          </div>
+                        )}
+
+                        {view === 'journey' && (
+                            <div className="max-w-2xl mx-auto space-y-12 border-l-2 border-sage-200 pl-8 animate-in slide-in-from-bottom-8 duration-700">
+                                {JOURNEY_PHASES.map((p, i) => (
+                                    <div key={i} className={`relative p-8 rounded-3xl border transition-all hover:translate-x-2 ${isNight ? 'bg-slate-800/40 border-slate-700' : 'bg-white/40 border-sage-100 shadow-sm'}`}>
+                                        <div className="absolute -left-[41px] top-4 w-4 h-4 bg-sage-600 rounded-full border-4 border-[#F5E9DC] dark:border-[#1a2533]"></div>
+                                        <span className="text-sage-600 font-bold block mb-1">{p.year}</span>
+                                        <h3 className="text-2xl font-bold mb-2">{p.title}</h3>
+                                        <p className="opacity-70 leading-relaxed">{p.desc}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {view === 'prompts' && (
+                            <div className="text-center space-y-12 animate-in zoom-in-95 duration-500">
+                                <div className="inline-block p-4 bg-sage-100 text-sage-600 rounded-3xl mb-4"><Icon name="PenTool" size={32} /></div>
+                                <div className={`p-12 border-2 border-dashed border-sage-200 rounded-[3rem] bg-opacity-30 min-h-[250px] flex items-center justify-center ${isNight ? 'bg-slate-800 border-slate-700' : 'bg-white border-sage-200'}`}>
+                                    <h3 className="text-3xl md:text-4xl italic leading-snug">
+                                        {aiLoading ? <Icon name="Zap" className="animate-pulse text-sage-600" size={40} /> : `"${activePrompt}"`}
+                                    </h3>
+                                </div>
+                                <button onClick={generateAIPrompt} disabled={aiLoading} className="bg-sage-600 text-white px-8 py-4 rounded-full font-bold flex items-center space-x-2 mx-auto shadow-xl hover:scale-105 active:scale-95 transition-all">
+                                    <Icon name="RefreshCw" className={aiLoading ? "animate-spin" : ""}/><span>✨ New AI Prompt</span>
+                                </button>
+                            </div>
+                        )}
+
+                        {view === 'community' && (
+                            <div className="max-w-3xl mx-auto space-y-12 animate-in slide-in-from-right-8 duration-500">
+                                <div className={`p-8 rounded-[2.5rem] shadow-xl ${isNight ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-sage-50'}`}>
+                                    <div className="flex items-center space-x-2 text-sage-600 mb-4 font-bold uppercase tracking-wider text-sm"><Icon name="Coffee" /><span>Leave a thought</span></div>
+                                    <textarea value={newComment} onChange={e => setNewComment(e.target.value)} className="w-full h-32 bg-transparent outline-none text-xl italic font-serif leading-relaxed" placeholder="Write a small sentence..."></textarea>
+                                    <div className="flex justify-end pt-4 border-t border-black/5">
+                                        <button onClick={handlePost} disabled={aiLoading || !newComment.trim()} className="bg-sage-600 text-white px-8 py-3 rounded-full flex items-center space-x-2 shadow-lg hover:scale-105 active:scale-95 transition-all">
+                                            {aiLoading ? <Icon name="Stars" className="animate-spin" /> : <span>Post Thought</span>}
+                                            <Icon name="Send" size={18}/>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-6">
+                                    {comments.map((c, i) => (
+                                        <div key={i} className={`p-8 rounded-3xl border transition-all hover:translate-y-[-2px] ${isNight ? 'bg-slate-800/30 border-slate-700' : 'bg-white/40 border-sage-100 shadow-sm'}`}>
+                                            <div className="flex justify-between items-center mb-4">
+                                                <span className="font-bold text-sage-600 flex items-center space-x-2"><Icon name="User" size={16}/><span>{c.name}</span></span>
+                                                <span className="text-[10px] uppercase font-bold tracking-widest opacity-40 px-2 py-1 bg-black/5 rounded">{c.category}</span>
+                                            </div>
+                                            <p className="opacity-80 font-sans leading-relaxed">{c.text}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <footer className={`py-12 border-t ${isNight ? 'border-slate-800' : 'border-sage-100'} text-center opacity-50 text-sm`}>
+                        <p>© 2024 Autobiography by Allen • Documenting the journey</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
